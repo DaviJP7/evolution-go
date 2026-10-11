@@ -34,6 +34,7 @@ import (
 )
 
 type SendService interface {
+	SendAlbum(data *AlbumStruct, instance *instance_model.Instance) (*MessageSendStruct, error)
 	SendText(data *TextStruct, instance *instance_model.Instance) (*MessageSendStruct, error)
 	SendLink(data *LinkStruct, instance *instance_model.Instance) (*MessageSendStruct, error)
 	SendMediaUrl(data *MediaStruct, instance *instance_model.Instance) (*MessageSendStruct, error)
@@ -100,6 +101,8 @@ type LinkStruct struct {
 }
 
 type MediaStruct struct {
+	AlbumID      string       `json:"albumId,omitempty"`
+	AlbumIndex   int32        `json:"albumIndex,omitempty"`
 	Number       string       `json:"number"`
 	Url          string       `json:"url"`
 	Type         string       `json:"type"`
@@ -933,6 +936,9 @@ func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
 }
 
 func (s *sendService) SendMediaFile(data *MediaStruct, fileData []byte, instance *instance_model.Instance) (*MessageSendStruct, error) {
+	if data.AlbumID != "" {
+		return s.sendMediaFileWithRetry(data, fileData, instance, 1)
+	}
 	return s.sendMediaFileWithRetry(data, fileData, instance, 3)
 }
 
@@ -1160,6 +1166,9 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 			return nil, errors.New("invalid media type")
 		}
 
+		if err := attachAlbumMedia(media, data); err != nil {
+			return nil, err
+		}
 		message, err := s.SendMessage(instance, media, mediaType, &SendDataStruct{
 			Id:           data.Id,
 			Number:       data.Number,
@@ -1193,6 +1202,9 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 }
 
 func (s *sendService) SendMediaUrl(data *MediaStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
+	if data.AlbumID != "" {
+		return s.sendMediaUrlWithRetry(data, instance, 1)
+	}
 	return s.sendMediaUrlWithRetry(data, instance, 3)
 }
 
@@ -1449,6 +1461,9 @@ func (s *sendService) sendMediaUrlWithRetry(data *MediaStruct, instance *instanc
 		}
 
 		messageStart := time.Now()
+		if err := attachAlbumMedia(media, data); err != nil {
+			return nil, err
+		}
 		message, err := s.SendMessage(instance, media, mediaType, &SendDataStruct{
 			Id:           data.Id,
 			Number:       data.Number,
@@ -2154,6 +2169,8 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 		}
 	} else {
 		switch messageType {
+		case "AlbumMessage":
+			msg.AlbumMessage.ContextInfo = &waE2E.ContextInfo{}
 		case "ExtendedTextMessage":
 			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
 		case "ImageMessage":
@@ -2320,6 +2337,10 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 	}
 
 	recipient.User = strings.ReplaceAll(recipient.User, "+", "")
+
+	if association := msg.GetMessageContextInfo().GetMessageAssociation(); association != nil && association.ParentMessageKey != nil {
+		association.ParentMessageKey.RemoteJID = proto.String(recipient.String())
+	}
 
 	s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Sending message to %s with ID %s", instance.Id, recipient.String(), message)
 

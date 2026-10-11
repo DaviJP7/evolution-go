@@ -13,6 +13,7 @@ import (
 )
 
 type SendHandler interface {
+	SendAlbum(ctx *gin.Context)
 	SendText(ctx *gin.Context)
 	SendLink(ctx *gin.Context)
 	SendMedia(ctx *gin.Context)
@@ -212,8 +213,15 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 			return
 		}
 
+		albumIndex, err := strconv.ParseInt(ctx.DefaultPostForm("albumIndex", "0"), 10, 32)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid albumIndex"})
+			return
+		}
 		// Create MediaStruct
 		data = &send_service.MediaStruct{
+			AlbumID:      ctx.PostForm("albumId"),
+			AlbumIndex:   int32(albumIndex),
 			Number:       number,
 			Type:         mediaType,
 			Caption:      caption,
@@ -228,7 +236,11 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 		// Pass fileBytes to the send service
 		message, err := s.sendMessageService.SendMediaFile(data, fileBytes, instance)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			if data.AlbumID != "" {
+				ctx.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "code": "ambiguous_delivery"})
+			} else {
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
 			return
 		}
 
@@ -268,13 +280,21 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 			}
 			message, err = s.sendMessageService.SendMediaFile(data, fileBytes, instance)
 			if err != nil {
-				ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				if data.AlbumID != "" {
+					ctx.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "code": "ambiguous_delivery"})
+				} else {
+					ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				}
 				return
 			}
 		} else {
 			message, err = s.sendMessageService.SendMediaUrl(data, instance)
 			if err != nil {
-				ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				if data.AlbumID != "" {
+					ctx.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "code": "ambiguous_delivery"})
+				} else {
+					ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				}
 				return
 			}
 		}
